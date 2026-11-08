@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ECO_IOT – Robot thu gom rác mặt nước</title>
+<link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;800&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com/3.4.17"></script>
+<script src="https://cdn.jsdelivr.net/npm/react@18.3.1/umd/react.production.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/htm@3.1.1/dist/htm.umd.js"></script>
+<style>
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);
+--bg:#F7FBF8;--card:#FFFFFF;--ink:#10291A;--mute:#587A63;--line:#D9EBDD;--teal:#178A3E;--deep:#0B3D22;--buoy:#E8512A;--ok:#2FA84F;--water:#CFEDD6;--dot:#D3EBD9}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0A1D12;--card:#12301E;--ink:#E4F4E8;--mute:#8CB197;--line:#21472E;--teal:#4ADE80;--deep:#07230F;--buoy:#FF7A55;--ok:#86EFAC;--water:#164A2A;--dot:#1E4A2E}}
+:root[data-theme="dark"]{--bg:#0A1D12;--card:#12301E;--ink:#E4F4E8;--mute:#8CB197;--line:#21472E;--teal:#4ADE80;--deep:#07230F;--buoy:#FF7A55;--ok:#86EFAC;--water:#164A2A;--dot:#1E4A2E}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{background-color:var(--bg);background-image:radial-gradient(var(--dot) 1.3px,transparent 1.3px);background-size:22px 22px;color:var(--ink);font-family:'Be Vietnam Pro',system-ui,sans-serif;margin:0}
+.card{background:var(--card);border:1px solid var(--line);border-top:3px solid var(--teal);border-radius:12px;box-shadow:0 2px 12px rgba(23,138,62,.08)}
+.mute{color:var(--mute)}.teal{color:var(--teal)}.buoy{color:var(--buoy)}.ok{color:var(--ok)}
+.btn{background:var(--teal);color:#fff;border-radius:8px;padding:.5rem .9rem;font-weight:600}
+.btn:focus-visible,.pad:focus-visible,input:focus-visible,select:focus-visible,.nav:focus-visible{outline:3px solid var(--buoy);outline-offset:2px}
+.btn2{border:1px solid var(--line);border-radius:8px;padding:.45rem .8rem;font-weight:500}
+.pad{background:var(--deep);color:#fff;border-radius:10px;height:56px;font-weight:600;touch-action:none;user-select:none}
+.pad:active{background:var(--teal)}
+.inp{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:.5rem .7rem;width:100%;color:var(--ink)}
+.nav{border-radius:8px;padding:.55rem .8rem;text-align:left;font-weight:500}
+.nav[aria-current=page]{background:var(--teal);color:#fff}
+th{text-align:left;font-weight:600;color:var(--mute);padding:.5rem .75rem;border-bottom:1px solid var(--line)}
+td{padding:.5rem .75rem;border-bottom:1px solid var(--line)}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+const html = htm.bind(React.createElement);
+const { useState, useEffect, useRef } = React;
+const W = 640, H = 380;
+const ROCKS = [[330,190,30],[510,90,22]];
+const NAV = [['control','Điều khiển robot'],['collect','Thu gom'],['history','Lịch sử'],['users','Người dùng']];
+const ROLE = { admin:'Quản trị viên', operator:'Người vận hành' };
+const TYPE_CLR = { 'lệnh':'var(--teal)', 'thu gom':'var(--ok)', 'cảnh báo':'var(--buoy)', 'di chuyển':'var(--mute)' };
+const DIRS = { F:'Tiến', B:'Lùi', L:'Rẽ trái', R:'Rẽ phải', S:'Dừng' };
+const initTrash = () => [[150,120],[210,260],[300,70],[400,300],[440,160],[560,240],[590,330],[120,330],[260,150]].map(p => ({x:p[0],y:p[1]}));
+const newSim = () => ({ x:80, y:300, h:45, dir:'S', speed:50, trail:[], trash:initTrash(), bin:20, collected:0, mech:'Chờ', mechT:0, auto:true, batt:87, run:0, dist:200, ir:false, cd:0, moved:0 });
+const gps = s => ({ lat:(10.946 + (H/2 - s.y)*0.000009).toFixed(6), lng:(106.824 + (s.x - W/2)*0.000009).toFixed(6) });
+const compass = h => ['Bắc','Đông Bắc','Đông','Đông Nam','Nam','Tây Nam','Tây','Tây Bắc'][Math.round(((h%360)+360)%360/45)%8];
+const hit = (x,y) => ROCKS.some(r => Math.hypot(x-r[0],y-r[1]) < r[2]+14);
+const fmtT = t => new Date(t).toLocaleString('vi-VN');
+const fmtD = s => `${String(Math.floor(s/3600)).padStart(2,'0')}:${String(Math.floor(s/60)%60).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`;
+
+const SEED_USERS = [
+  { id:1, name:'admin', pass:'admin123', role:'admin' },
+  { id:2, name:'vanhanh', pass:'123456', role:'operator' },
+];
+const SEED_LOGS = [
+  { t:Date.now()-3600e3*5, type:'lệnh', msg:'vanhanh: Khởi động robot' },
+  { t:Date.now()-3600e3*5+90e3, type:'thu gom', msg:'Thu gom 1 vật thể, khoang chứa 25%' },
+  { t:Date.now()-3600e3*4, type:'cảnh báo', msg:'Cảm biến siêu âm: vật cản cách 28 cm' },
+];
+const load = (k, d) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } };
+const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
+
+function Logo({ size = 40 }) {
+  const boy = (x, y, glasses, tie) => html`<g transform=${`translate(${x} ${y})`}>
+    <path d="M-21 100 Q-21 68 0 68 Q21 68 21 100Z" fill="#fff"/>
+    <rect x="-4" y="60" width="8" height="10" fill="#E8B88A"/>
+    <path d="M-6 68 L0 78 L6 68Z" fill="#D9F2DF" stroke="#0B3D22" stroke-width="1"/>
+    <path d="M0 76 L-3 82 L0 94 L3 82Z" fill=${tie}/>
+    <circle cx="0" cy="50" r="14" fill="#F2C9A0"/>
+    <path d="M-15 49 Q-16 31 0 32 Q16 31 15 49 Q9 41 0 42 Q-9 41 -15 49Z" fill="#2B1B12"/>
+    <circle cx="-5" cy="52" r="1.7" fill="#2B1B12"/><circle cx="5" cy="52" r="1.7" fill="#2B1B12"/>
+    <path d="M-4 58 Q0 61 4 58" fill="none" stroke="#2B1B12" stroke-width="1.3" stroke-linecap="round"/>
+    ${glasses && html`<g fill="none" stroke="#0B3D22" stroke-width="1.2"><circle cx="-5" cy="52" r="4.2"/><circle cx="5" cy="52" r="4.2"/><path d="M-0.8 52 H0.8"/></g>`}
+  </g>`;
+  return html`<svg width=${size} height=${size} viewBox="0 0 120 120" role="img" aria-label="Logo ECO_IOT: hai học sinh nam cấp 3">
+    <defs><clipPath id="lgc"><circle cx="60" cy="60" r="56"/></clipPath></defs>
+    <circle cx="60" cy="60" r="58" fill="#D9F2DF" stroke="#fff" stroke-width="3"/>
+    <g clip-path="url(#lgc)">
+      ${boy(80, 4, true, '#F4B942')}${boy(42, 0, false, '#178A3E')}
+      <path d="M0 90 Q15 82 30 90 T60 90 T90 90 T120 90 V120 H0Z" fill="#4ADE80" opacity=".85"/>
+      <path d="M0 98 Q15 90 30 98 T60 98 T90 98 T120 98 V120 H0Z" fill="#178A3E"/>
+    </g>
+  </svg>`;
+}
+
+const LEAF = 'M0 0C10-16 30-16 40 0C30 16 10 16 0 0Z';
+function Leaves() {
+  return html`<svg class="absolute inset-0 w-full h-full pointer-events-none" style=${{zIndex:-1}} viewBox="0 0 600 800" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+    <circle cx="520" cy="70" r="170" fill="#178A3E" opacity=".10"/>
+    <circle cx="60" cy="250" r="90" fill="#4ADE80" opacity=".18"/>
+    <circle cx="470" cy="440" r="50" fill="#4ADE80" opacity=".15"/>
+    <g fill="#178A3E" opacity=".22">
+      <path transform="translate(330 120) rotate(-35) scale(3)" d=${LEAF}/>
+      <path transform="translate(380 210) rotate(25) scale(2)" d=${LEAF}/>
+      <path transform="translate(120 420) rotate(-20) scale(2.6)" d=${LEAF}/>
+      <path transform="translate(400 560) rotate(40) scale(2.2)" d=${LEAF}/>
+      <path transform="translate(40 600) rotate(-60) scale(1.8)" d=${LEAF}/>
+    </g>
+    <path d="M0 690 Q75 650 150 690 T300 690 T450 690 T600 690 V800 H0Z" fill="#4ADE80" opacity=".3"/>
+    <path d="M0 735 Q75 700 150 735 T300 735 T450 735 T600 735 V800 H0Z" fill="#178A3E" opacity=".35"/>
+  </svg>`;
+}
+function Deco() {
+  return html`<svg class="absolute right-0 top-0 h-full pointer-events-none" style=${{zIndex:-1,width:'18rem'}} viewBox="0 0 288 80" preserveAspectRatio="xMaxYMid slice" aria-hidden="true">
+    <circle cx="250" cy="10" r="46" fill="#178A3E" opacity=".10"/>
+    <circle cx="205" cy="72" r="30" fill="#4ADE80" opacity=".2"/>
+    <g fill="#178A3E" opacity=".28">
+      <path transform="translate(140 44) rotate(-30)" d=${LEAF}/>
+      <path transform="translate(188 22) rotate(20) scale(.7)" d=${LEAF}/>
+      <path transform="translate(236 50) rotate(-50) scale(.8)" d=${LEAF}/>
+    </g>
+    <path d="M0 68 Q24 54 48 68 T96 68 T144 68 T192 68 T240 68 T288 68" fill="none" stroke="#178A3E" stroke-width="2" opacity=".3"/>
+  </svg>`;
+}
+
+function Login({ users, onLogin }) {
+  const [n, setN] = useState(''); const [p, setP] = useState(''); const [err, setErr] = useState('');
+  const submit = () => {
+    const u = users.find(x => x.name === n.trim() && x.pass === p);
+    u ? onLogin(u) : setErr('Sai tên đăng nhập hoặc mật khẩu. Thử lại hoặc dùng tài khoản mẫu bên dưới.');
+  };
+  return html`<div class="min-h-screen grid md:grid-cols-2">
+    <div class="relative isolate overflow-hidden p-8 pb-28 md:p-14 md:pb-36 flex flex-col justify-end" style=${{background:'var(--card)',borderRight:'1px solid var(--line)'}}><${Leaves} />
+      <${Logo} size=${104} />
+      <h1 class="text-4xl md:text-5xl font-extrabold mt-6 leading-tight teal">ECO_IOT</h1>
+      <p class="mt-3 text-lg opacity-80 max-w-md">Giám sát và điều khiển robot thu gom rác nổi trên mặt nước, chạy trên ESP32-S3.</p>
+    </div>
+    <div class="p-8 md:p-14 flex items-center">
+      <div class="w-full max-w-sm">
+        <h2 class="text-2xl font-semibold">Đăng nhập</h2>
+        <label class="block mt-5 text-sm mute" for="u">Tên đăng nhập</label>
+        <input id="u" class="inp mt-1" value=${n} onInput=${e => setN(e.target.value)} />
+        <label class="block mt-4 text-sm mute" for="p">Mật khẩu</label>
+        <input id="p" type="password" class="inp mt-1" value=${p} onInput=${e => setP(e.target.value)} onKeyDown=${e => e.key === 'Enter' && submit()} />
+        ${err && html`<p class="buoy text-sm mt-3" role="alert">${err}</p>`}
+        <button class="btn w-full mt-5" onClick=${submit}>Đăng nhập</button>
+        <p class="text-sm mute mt-6">Tài khoản mẫu: admin / admin123 (quản trị viên), vanhanh / 123456 (người vận hành).</p>
+      </div>
+    </div>
+  </div>`;
+}
+
+function PondMap({ s }) {
+  const rad = s.h * Math.PI / 180;
+  return html`<svg viewBox="0 0 ${W} ${H}" class="w-full rounded-lg" role="img" aria-label="Bản đồ khu vực hồ, vị trí robot và rác nổi" style=${{background:'var(--water)'}}>
+    ${[1,2,3,4,5].map(i => html`<line key=${'v'+i} x1=${i*106} y1="0" x2=${i*106} y2=${H} stroke="var(--line)" stroke-width="1"/>`)}
+    ${[1,2,3,4].map(i => html`<line key=${'h'+i} x1="0" y1=${i*76} x2=${W} y2=${i*76} stroke="var(--line)" stroke-width="1"/>`)}
+    ${ROCKS.map((r,i) => html`<circle key=${'r'+i} cx=${r[0]} cy=${r[1]} r=${r[2]} fill="#6B7C84"/>`)}
+    ${s.trash.map((t,i) => html`<g key=${'t'+i}><circle cx=${t.x} cy=${t.y} r="7" fill="var(--buoy)"/><circle cx=${t.x} cy=${t.y} r="12" fill="none" stroke="var(--buoy)" stroke-width="1.5" stroke-dasharray="3 3"/></g>`)}
+    <polyline points=${s.trail.map(p => p.join(',')).join(' ')} fill="none" stroke="var(--teal)" stroke-width="2.5" stroke-dasharray="2 5" stroke-linecap="round"/>
+    <g transform=${`translate(${s.x} ${s.y}) rotate(${s.h})`}>
+      <path d="M0,-34 L16,-6 L-16,-6Z" fill=${s.ir ? 'var(--ok)' : 'var(--mute)'} opacity=".35"/>
+      <path d="M0,-18 L12,14 L-12,14Z" fill="var(--deep)" stroke="#fff" stroke-width="2"/>
+    </g>
+  </svg>`;
+}
+
+function Control({ s, setCmd, setSpeed }) {
+  const g = gps(s);
+  const pad = (c, label) => html`<button class="pad" aria-label=${DIRS[c]}
+    onPointerDown=${() => setCmd(c)} onPointerUp=${() => setCmd('S')} onPointerLeave=${() => s.dir === c && setCmd('S')}>${label}</button>`;
+  const sens = [
+    ['GPS', 'Đã định vị · 8 vệ tinh', true],
+    ['La bàn', `${Math.round(((s.h%360)+360)%360)}° ${compass(s.h)}`, true],
+    ['Siêu âm phía trước', `${s.dist} cm`, s.dist > 40],
+    ['Hồng ngoại thu gom', s.ir ? 'Phát hiện vật thể' : 'Trống', true],
+    ['Động cơ trái / phải', s.dir === 'S' ? '0% / 0%' : `${s.speed}% / ${s.speed}%`, true],
+    ['Pin', `${Math.round(s.batt)}%`, s.batt > 20],
+  ];
+  return html`<div class="grid lg:grid-cols-3 gap-4">
+    <div class="card p-4 lg:col-span-2">
+      <${PondMap} s=${s} />
+      <div class="grid grid-cols-3 gap-3 mt-4 text-sm">
+        <div><div class="mute">Vĩ độ</div><div class="font-semibold">${g.lat}</div></div>
+        <div><div class="mute">Kinh độ</div><div class="font-semibold">${g.lng}</div></div>
+        <div><div class="mute">Hướng di chuyển</div><div class="font-semibold">${compass(s.h)}</div></div>
+      </div>
+    </div>
+    <div class="space-y-4">
+      <div class="card p-4">
+        <h3 class="font-semibold mb-3">Điều khiển</h3>
+        <div class="grid grid-cols-3 gap-2">
+          <div></div>${pad('F','Tiến')}<div></div>
+          ${pad('L','Trái')}${pad('S','Dừng')}${pad('R','Phải')}
+          <div></div>${pad('B','Lùi')}<div></div>
+        </div>
+        <label class="block mt-4 text-sm mute" for="sp">Tốc độ động cơ: <b style=${{color:'var(--ink)'}}>${s.speed}%</b></label>
+        <input id="sp" type="range" min="10" max="100" step="10" value=${s.speed} class="w-full mt-1" onChange=${e => setSpeed(+e.target.value)} onInput=${e => setSpeed(+e.target.value, true)} />
+      </div>
+      <div class="card p-4">
+        <h3 class="font-semibold mb-2">Trạng thái cảm biến</h3>
+        <ul>${sens.map(r => html`<li key=${r[0]} class="flex justify-between gap-3 py-1.5 text-sm" style=${{borderBottom:'1px solid var(--line)'}}>
+          <span class="mute">${r[0]}</span><span class=${'font-medium ' + (r[2] ? '' : 'buoy')}>${r[1]}</span></li>`)}</ul>
+      </div>
+    </div>
+  </div>`;
+}
+
+function Collect({ s, toggleAuto, empty }) {
+  const full = s.bin >= 90;
+  return html`<div class="grid md:grid-cols-2 gap-4">
+    <div class="card p-5">
+      <h3 class="font-semibold">Khoang chứa</h3>
+      <div class="text-5xl font-extrabold mt-3">${Math.round(s.bin)}%</div>
+      <div class="h-3 rounded-full mt-3 overflow-hidden" style=${{background:'var(--bg)'}} role="progressbar" aria-valuenow=${Math.round(s.bin)} aria-valuemin="0" aria-valuemax="100">
+        <div class="h-full" style=${{width:s.bin+'%',background:full ? 'var(--buoy)' : 'var(--teal)',transition:'width .4s'}}></div>
+      </div>
+      <p class=${'text-sm mt-3 ' + (full ? 'buoy' : 'mute')}>${full ? 'Khoang gần đầy. Đưa robot về bờ và xả rác để tiếp tục thu gom.' : 'Khoang còn chỗ chứa.'}</p>
+      <button class="btn2 mt-4" onClick=${empty}>Xả khoang chứa</button>
+    </div>
+    <div class="card p-5">
+      <h3 class="font-semibold">Cơ cấu thu gom</h3>
+      <dl class="mt-3 text-sm">
+        ${[['Cảm biến hồng ngoại', s.ir ? 'Có vật thể' : 'Không có vật thể'],['Cơ cấu thu gom', s.mech],['Rác đã thu gom', s.collected + ' vật thể'],['Rác còn trong hồ', s.trash.length + ' vật thể'],['Thời gian hoạt động', fmtD(s.run)]]
+          .map(r => html`<div key=${r[0]} class="flex justify-between py-2" style=${{borderBottom:'1px solid var(--line)'}}><dt class="mute">${r[0]}</dt><dd class="font-medium">${r[1]}</dd></div>`)}
+      </dl>
+      <label class="flex items-center gap-3 mt-4 text-sm">
+        <input type="checkbox" checked=${s.auto} onChange=${toggleAuto} class="w-5 h-5" />
+        Tự động kích hoạt cơ cấu khi hồng ngoại phát hiện vật thể
+      </label>
+    </div>
+  </div>`;
+}
+
+function History({ logs, s, canClear, clear }) {
+  const [f, setF] = useState('tất cả');
+  const types = ['tất cả','lệnh','di chuyển','thu gom','cảnh báo'];
+  const rows = f === 'tất cả' ? logs : logs.filter(l => l.type === f);
+  const cnt = t => logs.filter(l => l.type === t).length;
+  return html`<div>
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+      ${[['Thời gian hoạt động', fmtD(s.run)],['Lệnh điều khiển', cnt('lệnh')],['Lần thu gom', cnt('thu gom')],['Cảnh báo', cnt('cảnh báo')]]
+        .map(r => html`<div key=${r[0]} class="card p-4"><div class="text-sm mute">${r[0]}</div><div class="text-2xl font-extrabold mt-1">${r[1]}</div></div>`)}
+    </div>
+    <div class="card mt-4">
+      <div class="flex flex-wrap gap-2 p-3 items-center">
+        ${types.map(t => html`<button key=${t} class="btn2" aria-pressed=${f === t} style=${f === t ? {background:'var(--deep)',color:'#fff'} : {}} onClick=${() => setF(t)}>${t}</button>`)}
+        ${canClear && html`<button class="btn2 ml-auto buoy" onClick=${clear}>Xóa lịch sử</button>`}
+      </div>
+      <div class="overflow-x-auto"><table class="w-full text-sm">
+        <thead><tr><th>Thời gian</th><th>Loại</th><th>Nội dung</th></tr></thead>
+        <tbody>${rows.length ? rows.map((l,i) => html`<tr key=${l.t + '-' + i}>
+          <td class="whitespace-nowrap mute">${fmtT(l.t)}</td>
+          <td><span class="font-semibold" style=${{color:TYPE_CLR[l.type]}}>${l.type}</span></td><td>${l.msg}</td></tr>`)
+          : html`<tr><td colspan="3" class="mute">Chưa có bản ghi nào. Điều khiển robot để bắt đầu ghi lịch sử.</td></tr>`}</tbody>
+      </table></div>
+    </div>
+  </div>`;
+}
+
+function Users({ users, setUsers, me, addLog }) {
+  const [f, setF] = useState({ name:'', pass:'', role:'operator' });
+  const [err, setErr] = useState('');
+  const add = () => {
+    if (!f.name.trim() || f.pass.length < 6) return setErr('Nhập tên đăng nhập và mật khẩu từ 6 ký tự.');
+    if (users.some(u => u.name === f.name.trim())) return setErr('Tên đăng nhập đã tồn tại.');
+    setUsers([...users, { id:Date.now(), name:f.name.trim(), pass:f.pass, role:f.role }]);
+    addLog('lệnh', `${me.name}: Tạo tài khoản ${f.name.trim()} (${ROLE[f.role]})`);
+    setF({ name:'', pass:'', role:'operator' }); setErr('');
+  };
+  const del = u => { setUsers(users.filter(x => x.id !== u.id)); addLog('lệnh', `${me.name}: Xóa tài khoản ${u.name}`); };
+  const role = (u, r) => setUsers(users.map(x => x.id === u.id ? { ...x, role:r } : x));
+  return html`<div class="grid lg:grid-cols-3 gap-4">
+    <div class="card lg:col-span-2 overflow-x-auto"><table class="w-full text-sm">
+      <thead><tr><th>Tên đăng nhập</th><th>Mật khẩu</th><th>Vai trò</th><th></th></tr></thead>
+      <tbody>${users.map(u => html`<tr key=${u.id}>
+        <td class="font-medium">${u.name}</td><td class="mute">${'•'.repeat(Math.min(u.pass.length, 10))}</td>
+        <td><select class="inp" style=${{width:'auto'}} value=${u.role} disabled=${u.id === me.id} aria-label=${'Vai trò của ' + u.name} onChange=${e => role(u, e.target.value)}>
+          <option value="admin">Quản trị viên</option><option value="operator">Người vận hành</option></select></td>
+        <td class="text-right">${u.id !== me.id && html`<button class="btn2 buoy" onClick=${() => del(u)}>Xóa</button>`}</td></tr>`)}</tbody>
+    </table></div>
+    <div class="card p-4">
+      <h3 class="font-semibold">Thêm tài khoản</h3>
+      <label class="block mt-3 text-sm mute" for="nn">Tên đăng nhập</label>
+      <input id="nn" class="inp mt-1" value=${f.name} onInput=${e => setF({ ...f, name:e.target.value })} />
+      <label class="block mt-3 text-sm mute" for="np">Mật khẩu</label>
+      <input id="np" type="password" class="inp mt-1" value=${f.pass} onInput=${e => setF({ ...f, pass:e.target.value })} />
+      <label class="block mt-3 text-sm mute" for="nr">Vai trò</label>
+      <select id="nr" class="inp mt-1" value=${f.role} onChange=${e => setF({ ...f, role:e.target.value })}>
+        <option value="operator">Người vận hành</option><option value="admin">Quản trị viên</option></select>
+      ${err && html`<p class="buoy text-sm mt-3" role="alert">${err}</p>`}
+      <button class="btn w-full mt-4" onClick=${add}>Thêm tài khoản</button>
+    </div>
+  </div>`;
+}
+
+function App() {
+  const [users, setUsers] = useState(() => load('eco_users', SEED_USERS));
+  const [me, setMe] = useState(null);
+  const [tab, setTab] = useState('control');
+  const [logs, setLogs] = useState(() => load('eco_logs', SEED_LOGS));
+  const sim = useRef(newSim());
+  const [s, setS] = useState({ ...sim.current });
+  const meRef = useRef(null); meRef.current = me;
+  const addLog = (type, msg) => setLogs(l => [{ t:Date.now(), type, msg }, ...l].slice(0, 300));
+  useEffect(() => save('eco_users', users), [users]);
+  useEffect(() => save('eco_logs', logs), [logs]);
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      const r = sim.current;
+      if (!meRef.current) return;
+      r.run++; r.batt = Math.max(0, r.batt - 0.01); if (r.cd > 0) r.cd--;
+      if (r.dir === 'L') r.h -= 14; if (r.dir === 'R') r.h += 14;
+      if (r.dir === 'F' || r.dir === 'B') {
+        const k = (r.dir === 'F' ? 1 : -1) * r.speed / 100 * 12, a = r.h * Math.PI / 180;
+        const nx = Math.min(W-20, Math.max(20, r.x + Math.sin(a)*k)), ny = Math.min(H-20, Math.max(20, r.y - Math.cos(a)*k));
+        if (hit(nx, ny)) { if (!r.cd) { addLog('cảnh báo', 'Va chạm vật cản, robot tự dừng'); r.cd = 6; } r.dir = 'S'; }
+        else { r.x = nx; r.y = ny; r.trail.push([Math.round(nx), Math.round(ny)]); if (r.trail.length > 160) r.trail.shift();
+          if (++r.moved % 15 === 0) { const g = gps(r); addLog('di chuyển', `Vị trí ${g.lat}, ${g.lng} · hướng ${compass(r.h)}`); } }
+      }
+      const a = r.h * Math.PI / 180; let d = 0;
+      while (d < 200) { const px = r.x + Math.sin(a)*d, py = r.y - Math.cos(a)*d; if (px < 6 || px > W-6 || py < 6 || py > H-6 || hit(px, py)) break; d += 4; }
+      const nd = Math.round(d * 1.5);
+      if (nd < 40 && r.dist >= 40 && !r.cd) { addLog('cảnh báo', `Siêu âm: vật cản cách ${nd} cm`); r.cd = 6; }
+      r.dist = nd;
+      const fx = r.x + Math.sin(a)*24, fy = r.y - Math.cos(a)*24;
+      const i = r.trash.findIndex(t => Math.hypot(t.x - fx, t.y - fy) < 20);
+      r.ir = i >= 0;
+      if (r.ir && r.auto) {
+        if (r.bin >= 100) { if (!r.cd) { addLog('cảnh báo', 'Khoang chứa đã đầy, không thể thu gom'); r.cd = 8; } }
+        else { r.trash.splice(i, 1); r.bin = Math.min(100, r.bin + 6); r.collected++; r.mech = 'Đang thu gom'; r.mechT = 2;
+          addLog('thu gom', `Hồng ngoại phát hiện vật thể, kích hoạt cơ cấu. Khoang chứa ${Math.round(r.bin)}%`);
+          if (r.bin >= 90) addLog('cảnh báo', 'Khoang chứa gần đầy (≥ 90%)'); }
+      }
+      if (r.mechT > 0 && --r.mechT === 0) r.mech = 'Chờ';
+      setS({ ...r, trail: r.trail.slice(), trash: r.trash.slice() });
+    }, 500);
+    return () => clearInterval(id);
+  }, []);
+
+  const setCmd = c => { const r = sim.current; if (r.dir === c) return; r.dir = c; if (c !== 'S') addLog('lệnh', `${meRef.current.name}: ${DIRS[c]}`); };
+  const setSpeed = (v, live) => { sim.current.speed = v; setS(x => ({ ...x, speed:v })); if (!live) addLog('lệnh', `${me.name}: Đặt tốc độ động cơ ${v}%`); };
+  const toggleAuto = () => { sim.current.auto = !sim.current.auto; addLog('lệnh', `${me.name}: ${sim.current.auto ? 'Bật' : 'Tắt'} tự động thu gom`); };
+  const empty = () => { sim.current.bin = 0; addLog('lệnh', `${me.name}: Xả khoang chứa`); };
+
+  if (!me) return html`<${Login} users=${users} onLogin=${u => { setMe(u); setTab('control'); addLog('lệnh', `${u.name}: Đăng nhập (${ROLE[u.role]})`); }} />`;
+  const nav = NAV.filter(n => n[0] !== 'users' || me.role === 'admin');
+  return html`<div class="min-h-screen md:flex">
+    <aside class="md:w-60 p-4 md:min-h-screen flex md:flex-col gap-2 overflow-x-auto" style=${{background:'var(--card)',borderRight:'1px solid var(--line)'}}>
+      <div class="hidden md:flex items-center gap-2 px-2 py-2"><${Logo} size=${44} /><span class="font-extrabold text-xl teal">ECO_IOT</span></div>
+      ${nav.map(n => html`<button key=${n[0]} class="nav whitespace-nowrap" aria-current=${tab === n[0] ? 'page' : undefined} onClick=${() => setTab(n[0])}>${n[1]}</button>`)}
+      <svg class="hidden md:block mt-auto w-full" viewBox="0 0 200 90" aria-hidden="true"><circle cx="160" cy="20" r="34" fill="#178A3E" opacity=".10"/><g fill="#178A3E" opacity=".3"><path transform="translate(30 40) rotate(-35) scale(1.5)" d=${LEAF}/><path transform="translate(80 24) rotate(20)" d=${LEAF}/><path transform="translate(120 52) rotate(-50) scale(1.2)" d=${LEAF}/></g><path d="M0 70 Q25 56 50 70 T100 70 T150 70 T200 70 V90 H0Z" fill="#4ADE80" opacity=".35"/><path d="M0 80 Q25 68 50 80 T100 80 T150 80 T200 80 V90 H0Z" fill="#178A3E" opacity=".4"/></svg>
+      <div class="text-sm px-2 hidden md:block">
+        <div class="font-medium">${me.name}</div><div class="mute">${ROLE[me.role]}</div>
+        <button class="btn2 mt-3 w-full" onClick=${() => { sim.current.dir = 'S'; addLog('lệnh', `${me.name}: Đăng xuất`); setMe(null); }}>Đăng xuất</button>
+      </div>
+    </aside>
+    <main class="flex-1 p-4 md:p-8 min-w-0">
+      <header class="card relative isolate overflow-hidden px-5 py-4 flex flex-wrap items-center justify-between gap-2 mb-5"><${Deco} />
+        <h1 class="text-2xl font-extrabold">${nav.find(n => n[0] === tab)[1]}</h1>
+        <div class="text-sm mute">Pin ${Math.round(s.batt)}% · Hoạt động ${fmtD(s.run)} · <button class="underline md:hidden" onClick=${() => setMe(null)}>Đăng xuất</button></div>
+      </header>
+      ${tab === 'control' && html`<${Control} s=${s} setCmd=${setCmd} setSpeed=${setSpeed} />`}
+      ${tab === 'collect' && html`<${Collect} s=${s} toggleAuto=${toggleAuto} empty=${empty} />`}
+      ${tab === 'history' && html`<${History} logs=${logs} s=${s} canClear=${me.role === 'admin'} clear=${() => setLogs([])} />`}
+      ${tab === 'users' && me.role === 'admin' && html`<${Users} users=${users} setUsers=${setUsers} me=${me} addLog=${addLog} />`}
+    </main>
+  </div>`;
+}
+ReactDOM.createRoot(document.getElementById('root')).render(html`<${App} />`);
+</script>
+</body>
+</html>
